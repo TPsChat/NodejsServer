@@ -290,4 +290,4 @@ See API documentation or Postman collection for complete list.
 
 ---
 
-For more details, see the [main README](../../README.md).
+For more details, see the [main README](https://github.com/TPsChat/.github/tree/main/README.md).
