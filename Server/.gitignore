@@ -124,8 +124,8 @@ dist/
 *.bak
 *.backup
 
-# Lock files (keep yarn.lock but ignore others)
-package-lock.json
+# Lock files
+# Keep package-lock.json for reproducible Docker builds
 
 # Local development files
 .local
