@@ -3,6 +3,30 @@ const Post = require('../models/Post');
 const Chat = require('../models/Chat');
 const { validationResult } = require('express-validator');
 
+function toId(value) {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  if (value._id) return value._id.toString();
+  return value.toString();
+}
+
+function formatUserRef(user) {
+  if (!user) {
+    return {
+      _id: null,
+      username: 'Deleted User',
+      avatar: '',
+      profile: null
+    };
+  }
+  return {
+    _id: toId(user),
+    username: user.username || 'Deleted User',
+    avatar: user.avatar || '',
+    profile: user.profile || null
+  };
+}
+
 /**
  * Get messages updated/created after a timestamp
  * @route GET /api/updates/messages?since=timestamp
@@ -64,28 +88,26 @@ const getMessagesUpdates = async (req, res) => {
     res.json({
       success: true,
       data: {
-        messages: messages.map(msg => ({
-          _id: msg._id,
-          chatId: msg.chatId._id || msg.chatId,
-          senderId: msg.senderId._id || msg.senderId,
-          sender: {
-            _id: msg.senderId._id || msg.senderId,
-            username: msg.senderId.username,
-            avatar: msg.senderId.avatar,
-            profile: msg.senderId.profile
-          },
-          content: msg.content,
-          type: msg.type,
-          attachments: msg.attachments,
-          timestamp: msg.createdAt?.getTime() || 0,
-          updatedAt: msg.updatedAt?.getTime() || msg.createdAt?.getTime() || 0,
-          isRead: msg.readBy?.some(r => r.user.toString() === userId.toString()) || false,
-          isDeleted: msg.isDeleted,
-          replyTo: msg.replyTo,
-          reactions: msg.reactions,
-          edited: msg.edited,
-          editedAt: msg.editedAt?.getTime() || null
-        })),
+        messages: messages.map(msg => {
+          const sender = formatUserRef(msg.senderId);
+          return {
+            _id: msg._id,
+            chatId: toId(msg.chatId) || msg.chatId,
+            senderId: sender._id,
+            sender,
+            content: msg.content,
+            type: msg.type,
+            attachments: msg.attachments,
+            timestamp: msg.createdAt?.getTime() || 0,
+            updatedAt: msg.updatedAt?.getTime() || msg.createdAt?.getTime() || 0,
+            isRead: msg.readBy?.some(r => r.user && r.user.toString() === userId.toString()) || false,
+            isDeleted: msg.isDeleted,
+            replyTo: msg.replyTo,
+            reactions: msg.reactions,
+            edited: msg.edited,
+            editedAt: msg.editedAt?.getTime() || null
+          };
+        }),
         updated_at: latestTimestamp
       }
     });
@@ -128,17 +150,23 @@ const getPostsUpdates = async (req, res) => {
     const posts = await Post.find({
       isActive: true,
       isDeleted: false,
-      $or: [
-        { createdAt: { $gt: new Date(since) } },
-        { updatedAt: { $gt: new Date(since) } }
-      ],
-      $or: [
-        { privacySetting: 'public' },
-        { 
-          privacySetting: 'friends',
-          userId: { $in: [userId, ...userFriends] }
+      $and: [
+        {
+          $or: [
+            { createdAt: { $gt: new Date(since) } },
+            { updatedAt: { $gt: new Date(since) } }
+          ]
         },
-        { userId: userId }
+        {
+          $or: [
+            { privacySetting: 'public' },
+            {
+              privacySetting: 'friends',
+              userId: { $in: [userId, ...userFriends] }
+            },
+            { userId: userId }
+          ]
+        }
       ]
     })
       .populate('userId', 'username avatar profile.firstName profile.lastName')
@@ -164,28 +192,26 @@ const getPostsUpdates = async (req, res) => {
     res.json({
       success: true,
       data: {
-        posts: posts.map(post => ({
-          _id: post._id,
-          userId: post.userId._id || post.userId,
-          author: {
-            _id: post.userId._id || post.userId,
-            username: post.userId.username,
-            avatar: post.userId.avatar,
-            profile: post.userId.profile
-          },
-          content: post.content,
-          images: post.images || [],
-          mediaType: post.images && post.images.length > 0 ? 'gallery' : 'none',
-          createdAt: post.createdAt?.getTime() || 0,
-          updatedAt: post.updatedAt?.getTime() || post.createdAt?.getTime() || 0,
-          likesCount: post.likes?.length || 0,
-          commentsCount: post.commentsCount || 0,
-          sharesCount: post.shares?.length || 0,
-          isLiked: post.likes?.some(l => l.user.toString() === userId.toString()) || false,
-          tags: post.tags || [],
-          privacySetting: post.privacySetting,
-          sharedPostId: post.sharedPostId
-        })),
+        posts: posts.map(post => {
+          const author = formatUserRef(post.userId);
+          return {
+            _id: post._id,
+            userId: author._id,
+            author,
+            content: post.content,
+            images: post.images || [],
+            mediaType: post.images && post.images.length > 0 ? 'gallery' : 'none',
+            createdAt: post.createdAt?.getTime() || 0,
+            updatedAt: post.updatedAt?.getTime() || post.createdAt?.getTime() || 0,
+            likesCount: post.likes?.length || 0,
+            commentsCount: post.commentsCount || 0,
+            sharesCount: post.shares?.length || 0,
+            isLiked: post.likes?.some(l => l.user && toId(l.user) === userId.toString()) || false,
+            tags: (post.tags || []).filter(Boolean).map(formatUserRef),
+            privacySetting: post.privacySetting,
+            sharedPostId: post.sharedPostId
+          };
+        }),
         updated_at: latestTimestamp
       }
     });
