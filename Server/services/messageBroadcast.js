@@ -48,11 +48,17 @@ function broadcastChatMessage(io, chat, senderUserId, message, messageObj) {
 
   const senderId = senderUserId ? senderUserId.toString() : null;
 
+  const chatId = chat._id?.toString?.() || String(chat);
+  console.log('[SOCKET]', event, 'chat:', chatId, 'sender:', senderId);
+
   for (const participant of chat.participants || []) {
     if (!participant.isActive || !participant.user) continue;
     const userId = toUserId(participant.user);
     if (!userId || (senderId && userId === senderId)) continue;
-    io.to(`user_${userId}`).emit(event, payload);
+    const room = `user_${userId}`;
+    const socketsInRoom = io.sockets?.adapter?.rooms?.get(room)?.size ?? 0;
+    console.log('[SOCKET] emit', event, '→', room, 'sockets:', socketsInRoom);
+    io.to(room).emit(event, payload);
   }
 }
 
