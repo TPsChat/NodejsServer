@@ -19,7 +19,6 @@ const {
 } = require('../controllers/userController');
 const { authMiddleware, adminOnly } = require('../middleware/authMiddleware');
 const { createUser, updateUser: adminUpdateUser, deleteUser: adminDeleteUser, setRole, resetPassword } = require('../controllers/adminUserController');
-const { getUserStats } = require('../controllers/serverController');
 
 const router = express.Router();
 

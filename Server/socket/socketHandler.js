@@ -1,8 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const Group = require('../models/Group');
 const Chat = require('../models/Chat');
-const Message = require('../models/Message');
 const Call = require('../models/Call');
 
 // Helper function to extract chatId string from call object (handles both ObjectId and populated object)
@@ -112,139 +110,43 @@ class SocketHandler {
 
   // Handle user-specific socket events
   handleUserEvents(socket) {
-    // Join user room for private messages
-    socket.on('join_user_room', () => {
-      const userRoom = `user_${socket.userId}`;
-      socket.join(userRoom);
-      console.log(`User ${socket.userId} joined user room: ${userRoom}`);
-    });
+    const broadcastTypingToChat = async (chatId, eventName) => {
+      const chat = await Chat.findById(chatId).select('participants isActive');
+      if (!chat || !chat.isActive) {
+        return;
+      }
 
-    // Leave user room
-    socket.on('leave_user_room', () => {
-      const userRoom = `user_${socket.userId}`;
-      socket.leave(userRoom);
-      console.log(`User ${socket.userId} left user room: ${userRoom}`);
-    });
+      const payload = {
+        chatId: chat._id.toString(),
+        userId: socket.userId,
+        username: socket.user.username
+      };
 
-    // Send private message
-    socket.on('send_private_message', async (data) => {
+      for (const participant of chat.participants) {
+        if (!participant.isActive) continue;
+        const participantUserId = participant.user?.toString();
+        if (!participantUserId || participantUserId === socket.userId) continue;
+        this.io.to(`user_${participantUserId}`).emit(eventName, payload);
+      }
+    };
+
+    socket.on('typing', async (data) => {
       try {
-        const { receiverId, content, messageType = 'text' } = data;
-        
-        if (!receiverId || !content) {
-          socket.emit('error', { message: 'Receiver ID and content are required' });
-          return;
-        }
-
-        // Verify receiver exists
-        const receiver = await User.findById(receiverId);
-        if (!receiver || !receiver.isActive) {
-          socket.emit('error', { message: 'Receiver not found' });
-          return;
-        }
-
-        // Find or create private chat
-        let chat = await Chat.findOne({
-          type: 'private',
-          'participants.user': { $all: [socket.userId, receiverId] },
-          'participants.isActive': true,
-          isActive: true
-        });
-
-        if (!chat) {
-          // Create new private chat
-          chat = new Chat({
-            type: 'private',
-            participants: [
-              { user: socket.userId, role: 'member' },
-              { user: receiverId, role: 'member' }
-            ],
-            createdBy: socket.userId
-          });
-          await chat.save();
-        }
-
-        // Create message
-        const message = new Message({
-          chat: chat._id,
-          sender: socket.userId,
-          content,
-          messageType,
-          readBy: [{ user: socket.userId, readAt: new Date() }]
-        });
-
-        await message.save();
-
-        // Update chat last message and activity
-        chat.lastMessage = message._id;
-        chat.lastActivity = new Date();
-        await chat.save();
-
-        // Populate message with sender info
-        await message.populate('sender', 'username email avatar');
-
-        const messageObj = message.toJSON();
-        const senderInfo = {
-          id: message.sender._id,
-          username: message.sender.username,
-          avatar: message.sender.avatar || ''
-        };
-
-        // Send message to receiver if online
-        const receiverRoom = `user_${receiverId}`;
-        this.io.to(receiverRoom).emit('private_message', {
-          message: {
-            ...messageObj,
-            // Ensure sender has avatar info
-            sender: {
-              ...messageObj.sender,
-              avatar: message.sender.avatar || ''
-            }
-          },
-          chatId: chat._id,
-          chatType: 'private',
-          senderInfo
-        });
-
-        // Send confirmation to sender
-        socket.emit('message_sent', {
-          message: {
-            ...messageObj,
-            // Ensure sender has avatar info
-            sender: {
-              ...messageObj.sender,
-              avatar: message.sender.avatar || ''
-            }
-          },
-          chatId: chat._id,
-          chatType: 'private',
-          senderInfo
-        });
-
-        console.log(`Private message sent from ${socket.userId} to ${receiverId}`);
-
+        const { chatId } = data || {};
+        if (!chatId) return;
+        await broadcastTypingToChat(chatId, 'user_typing');
       } catch (error) {
-        console.error('Send private message error:', error);
-        socket.emit('error', { message: 'Failed to send message' });
+        console.error('Typing error:', error);
       }
     });
 
-    // Handle typing indicators
-    socket.on('typing', (data) => {
+    socket.on('stop_typing', async (data) => {
       try {
-        const { receiverId, isTyping } = data;
-        
-        if (!receiverId) return;
-
-        const receiverRoom = `user_${receiverId}`;
-        socket.to(receiverRoom).emit('typing', {
-          senderId: socket.userId,
-          isTyping,
-          timestamp: new Date()
-        });
-
+        const { chatId } = data || {};
+        if (!chatId) return;
+        await broadcastTypingToChat(chatId, 'user_stop_typing');
       } catch (error) {
-        console.error('Typing error:', error);
+        console.error('Stop typing error:', error);
       }
     });
   }
@@ -267,11 +169,6 @@ class SocketHandler {
   sendToUser(userId, event, data) {
     const userRoom = `user_${userId}`;
     this.io.to(userRoom).emit(event, data);
-  }
-
-  // Send message to specific group
-  sendToGroup(groupId, event, data) {
-    this.groupHandler.broadcastToGroup(groupId, event, data);
   }
 
   // Helper: emit to call participants excluding sender, and also to user rooms for those not in the call room yet
@@ -630,46 +527,6 @@ class SocketHandler {
       }
     });
 
-    // WebRTC signaling
-    socket.on('webrtc_offer', (data) => {
-      const { callId, offer } = data;
-
-      const payload = {
-        callId: callId,
-        offer: offer,
-        fromUserId: socket.userId,
-        fromUsername: socket.user.username
-      };
-
-      this.emitToCallParticipantsExceptSender(callId, 'webrtc_offer', payload, socket);
-    });
-
-    socket.on('webrtc_answer', (data) => {
-      const { callId, answer } = data;
-
-      const payload = {
-        callId: callId,
-        answer: answer,
-        fromUserId: socket.userId,
-        fromUsername: socket.user.username
-      };
-
-      this.emitToCallParticipantsExceptSender(callId, 'webrtc_answer', payload, socket);
-    });
-
-    socket.on('webrtc_ice_candidate', (data) => {
-      const { callId, candidate } = data;
-
-      const payload = {
-        callId: callId,
-        candidate: candidate,
-        fromUserId: socket.userId
-      };
-
-      this.emitToCallParticipantsExceptSender(callId, 'webrtc_ice_candidate', payload, socket);
-    });
-
-    // Handle custom video frames (without WebRTC)
     socket.on('video_frame', async (data) => {
       try {
         const { callId, frame, timestamp } = data;
@@ -859,443 +716,6 @@ class SocketHandler {
       }
     });
 
-
-    // Call status updates
-    socket.on('call_status_update', async (data) => {
-      try {
-        const { callId, status, details } = data;
-        
-        // Update call in database
-        const call = await Call.findOne({ callId: callId });
-        if (call) {
-          await call.addLog(socket.userId, status, details || '');
-          
-          // Broadcast status update to all participants
-          this.io.to(`call_${callId}`).emit('call_status_updated', {
-            callId: callId,
-            status: status,
-            userId: socket.userId,
-            username: socket.user.username,
-            details: details,
-            timestamp: new Date()
-          });
-        }
-      } catch (error) {
-        console.error('Call status update error:', error);
-        socket.emit('call_error', { message: 'Failed to update call status' });
-      }
-    });
-
-    // Call settings updates
-    socket.on('call_settings_update', async (data) => {
-      try {
-        const { callId, settings } = data;
-        
-        // Update call settings in database
-        const call = await Call.findOne({ callId: callId });
-        if (call) {
-          Object.assign(call.settings, settings);
-          await call.save();
-          
-          // Broadcast settings update to all participants
-          this.io.to(`call_${callId}`).emit('call_settings_updated', {
-            callId: callId,
-            settings: call.settings,
-            userId: socket.userId,
-            username: socket.user.username,
-            timestamp: new Date()
-          });
-        }
-      } catch (error) {
-        console.error('Call settings update error:', error);
-        socket.emit('call_error', { message: 'Failed to update call settings' });
-      }
-    });
-
-    // Handle member removed from group
-    socket.on('member_removed', (data) => {
-      console.log(`User ${socket.userId} was removed from group:`, data);
-      // Client should handle this event to refresh chat list
-    });
-
-    // Handle member removed from group (for other members)
-    socket.on('member_removed_from_group', (data) => {
-      console.log(`User ${socket.userId} received member removal notification:`, data);
-      // Client should handle this event to refresh group members list
-    });
-
-    // Group call specific events - simplified join/leave handlers
-    socket.on('join_group_call', async (data) => {
-      try {
-        let { chatId, callId, sessionId } = data;
-        
-        if (!chatId) {
-          socket.emit('group_call_error', { message: 'chatId is required' });
-          return;
-        }
-        
-        // Normalize chatId - handle both string and object formats
-        if (typeof chatId === 'object') {
-          chatId = chatId._id || chatId.id || JSON.stringify(chatId);
-        } else if (typeof chatId === 'string' && chatId.startsWith('{')) {
-          try {
-            const chatObj = JSON.parse(chatId);
-            chatId = chatObj._id || chatObj.id || chatId;
-          } catch (e) {
-            console.warn(`[Socket] Could not parse chatId: ${chatId}`);
-          }
-        }
-        
-        const room = `group_call_${chatId}`;
-        socket.join(room);
-        console.log(`[Socket] User ${socket.userId} joined room ${room} (callId: ${callId}, sessionId: ${sessionId || 'none'})`);
-        
-        socket.emit('group_call_joined', { chatId, callId, sessionId });
-      } catch (error) {
-        console.error('Join group call error:', error);
-        socket.emit('group_call_error', { message: 'Failed to join group call' });
-      }
-    });
-
-    socket.on('leave_group_call', async (data) => {
-      try {
-        const { chatId } = data;
-        
-        if (!chatId) {
-          return;
-        }
-        
-        const room = `group_call_${chatId}`;
-        socket.leave(room);
-        console.log(`[Socket] User ${socket.userId} left room ${room}`);
-      } catch (error) {
-        console.error('Leave group call error:', error);
-      }
-    });
-
-    socket.on('join_group_call_room', async (data) => {
-      try {
-        const { callId } = data;
-        
-        // Verify user is participant in group call
-        const call = await Call.findOne({ callId: callId, isGroupCall: true });
-        if (!call) {
-          socket.emit('group_call_error', { message: 'Group call not found' });
-          return;
-        }
-
-        const participant = call.participants.find(p => p.userId.toString() === socket.userId);
-        if (!participant) {
-          socket.emit('group_call_error', { message: 'You are not a participant in this call' });
-          return;
-        }
-
-        // CRITICAL FIX: Use chatId for socket room instead of callId
-        // This ensures all users in the same chat join the same socket room
-        // even if they have different callIds (due to race conditions)
-        const chatId = extractChatId(call);
-        if (!chatId) {
-          console.error(`[Socket] Cannot extract chatId from call ${callId}`);
-          socket.emit('group_call_error', { message: 'Invalid call data' });
-          return;
-        }
-        const socketRoom = `group_call_${chatId}`;
-        
-        // Join socket room based on chatId (not callId)
-        socket.join(socketRoom);
-        
-        console.log(`User ${socket.userId} joined group call socket room: ${socketRoom} (callId: ${callId}, chatId: ${chatId})`);
-
-        // Notify other participants in the same chat room
-        socket.to(socketRoom).emit('group_call_user_joined_room', {
-          callId: callId,
-          chatId: chatId,
-          userId: socket.userId,
-          username: socket.user.username,
-          avatar: socket.user.avatar,
-          timestamp: new Date()
-        });
-
-        // Send current participants list to joining user
-        const activeParticipants = call.participants.filter(p => p.status === 'connected');
-        
-        // SFU functionality has been removed
-        
-        socket.emit('group_call_room_state', {
-          callId: callId,
-          chatId: chatId,
-          participants: activeParticipants,
-          participantMedia: call.participantMedia,
-          roomId: call.webrtcData.roomId,
-          iceServers: call.webrtcData.iceServers,
-          topology: call.webrtcData.mediaTopology,
-          sfu: null
-        });
-
-      } catch (error) {
-        console.error('Join group call room error:', error);
-        socket.emit('group_call_error', { message: 'Failed to join group call room' });
-      }
-    });
-
-    // Mesh WebRTC signaling removed - SFU only
-    // All offer/answer/ice candidate handlers removed
-    // SFU handles all signaling via sfu-* events
-    
-    // Placeholder to prevent errors - will be removed
-    socket.on('group_call_webrtc_offer', async (data) => {
-      try {
-      const { callId, offer, toUserId, sessionId, chatId: providedChatId } = data;
-
-        // Get call to find chatId for socket room and validate sessionId
-        const call = await Call.findOne({ callId: callId, isGroupCall: true });
-        if (!call) {
-          console.error(`[signal] Call not found for offer: ${callId}`);
-          return;
-        }
-
-        // Extract chatId properly using helper function
-        const chatId = providedChatId || extractChatId(call);
-        if (!chatId) {
-          console.error(`[signal] Cannot extract chatId from call ${callId}`);
-          return;
-        }
-        const socketRoom = `group_call_${chatId}`;
-
-        // CRITICAL: Validate sessionId if provided
-        if (sessionId) {
-          const fromParticipant = call.participants.find(p => p.userId.toString() === socket.userId);
-          if (fromParticipant) {
-            if (fromParticipant.sessionId && fromParticipant.sessionId !== sessionId) {
-              console.log(`[signal] DROPPED offer - sessionId mismatch: from=${socket.userId}, expected=${fromParticipant.sessionId}, received=${sessionId}, callId=${callId}`);
-              return; // Drop stale offer
-            } else if (!fromParticipant.sessionId) {
-              // Participant doesn't have sessionId yet - update it (first message from this session)
-              fromParticipant.sessionId = sessionId;
-              call.save().catch(err => console.error(`[signal] Error saving sessionId: ${err.message}`));
-              console.log(`[signal] Updated sessionId for ${socket.userId} to ${sessionId}`);
-            }
-          } else {
-            console.warn(`[signal] Participant ${socket.userId} not found in call ${callId} - allowing offer (may be race condition)`);
-          }
-        } else {
-          console.log(`[signal] No sessionId provided for offer from ${socket.userId} - allowing (backward compatibility)`);
-        }
-
-      const payload = {
-        callId: callId,
-          chatId: chatId,
-        offer: offer,
-        fromUserId: socket.userId,
-        fromUsername: socket.user.username,
-        sessionId: sessionId
-      };
-
-      if (toUserId) {
-        // Send to specific participant (for mesh)
-        // Find socketId for target user
-        let targetSocketId = null;
-        for (const [sid, uid] of this.socketToUserMap.entries()) {
-          if (uid === toUserId) {
-            targetSocketId = sid;
-            break;
-          }
-        }
-        
-        if (targetSocketId) {
-          this.io.to(targetSocketId).emit('group_call_webrtc_offer', payload);
-        } else {
-          // CRITICAL FIX: Try multiple delivery methods
-          // 1. Try user room
-          this.io.to(`user_${toUserId}`).emit('group_call_webrtc_offer', payload);
-          // 2. Also try socket room (group_call_${chatId}) as fallback
-          // This ensures users in the same group call room receive the offer
-          socket.to(socketRoom).emit('group_call_webrtc_offer', payload);
-        }
-      } else {
-          // Broadcast to all in chat room except sender
-          socket.to(socketRoom).emit('group_call_webrtc_offer', payload);
-        }
-      } catch (error) {
-        console.error('Error handling group call offer:', error);
-      }
-    });
-
-    socket.on('group_call_webrtc_answer', async (data) => {
-      try {
-      const { callId, answer, toUserId, sessionId, chatId: providedChatId } = data;
-
-        // Get call to find chatId for socket room and validate sessionId
-        const call = await Call.findOne({ callId: callId, isGroupCall: true });
-        if (!call) {
-          console.error(`[signal] Call not found for answer: ${callId}`);
-          return;
-        }
-
-        // Extract chatId properly using helper function
-        const chatId = providedChatId || extractChatId(call);
-        if (!chatId) {
-          console.error(`[signal] Cannot extract chatId from call ${callId}`);
-          return;
-        }
-        const socketRoom = `group_call_${chatId}`;
-
-        // CRITICAL: Validate sessionId if provided
-        if (sessionId) {
-          const fromParticipant = call.participants.find(p => p.userId.toString() === socket.userId);
-          if (fromParticipant) {
-            if (fromParticipant.sessionId && fromParticipant.sessionId !== sessionId) {
-              console.log(`[signal] DROPPED answer - sessionId mismatch: from=${socket.userId}, expected=${fromParticipant.sessionId}, received=${sessionId}, callId=${callId}`);
-              return; // Drop stale answer
-            } else if (!fromParticipant.sessionId) {
-              // Participant doesn't have sessionId yet - update it (first message from this session)
-              fromParticipant.sessionId = sessionId;
-              call.save().catch(err => console.error(`[signal] Error saving sessionId: ${err.message}`));
-              console.log(`[signal] Updated sessionId for ${socket.userId} to ${sessionId}`);
-            }
-          } else {
-            console.warn(`[signal] Participant ${socket.userId} not found in call ${callId} - allowing answer (may be race condition)`);
-          }
-        } else {
-          console.log(`[signal] No sessionId provided for answer from ${socket.userId} - allowing (backward compatibility)`);
-        }
-
-      const payload = {
-        callId: callId,
-          chatId: chatId,
-        answer: answer,
-        fromUserId: socket.userId,
-        fromUsername: socket.user.username,
-        sessionId: sessionId
-      };
-
-      if (toUserId) {
-        // Send to specific participant (for mesh)
-        // Find socketId for target user
-        let targetSocketId = null;
-        for (const [sid, uid] of this.socketToUserMap.entries()) {
-          if (uid === toUserId) {
-            targetSocketId = sid;
-            break;
-          }
-        }
-        
-        if (targetSocketId) {
-          this.io.to(targetSocketId).emit('group_call_webrtc_answer', payload);
-        } else {
-          this.io.to(`user_${toUserId}`).emit('group_call_webrtc_answer', payload);
-        }
-      } else {
-          // Broadcast to all in chat room except sender
-          socket.to(socketRoom).emit('group_call_webrtc_answer', payload);
-        }
-      } catch (error) {
-        console.error('Error handling group call answer:', error);
-      }
-    });
-
-    socket.on('group_call_ice_candidate', async (data) => {
-      try {
-      const { callId, candidate, toUserId, sessionId, chatId: providedChatId } = data;
-
-        // Get call to find chatId for socket room and validate sessionId
-        const call = await Call.findOne({ callId: callId, isGroupCall: true });
-        if (!call) {
-          console.error(`[signal] Call not found for ICE candidate: ${callId}`);
-          return;
-        }
-
-        // Extract chatId properly using helper function
-        const chatId = providedChatId || extractChatId(call);
-        if (!chatId) {
-          console.error(`[signal] Cannot extract chatId from call ${callId}`);
-          return;
-        }
-        const socketRoom = `group_call_${chatId}`;
-
-        // CRITICAL: Validate sessionId if provided
-        if (sessionId) {
-          const fromParticipant = call.participants.find(p => p.userId.toString() === socket.userId);
-          if (fromParticipant) {
-            if (fromParticipant.sessionId && fromParticipant.sessionId !== sessionId) {
-              console.log(`[signal] DROPPED ice_candidate - sessionId mismatch: from=${socket.userId}, expected=${fromParticipant.sessionId}, received=${sessionId}, callId=${callId}`);
-              return; // Drop stale candidate
-            } else if (!fromParticipant.sessionId) {
-              // Participant doesn't have sessionId yet - update it (first message from this session)
-              fromParticipant.sessionId = sessionId;
-              call.save().catch(err => console.error(`[signal] Error saving sessionId: ${err.message}`));
-              console.log(`[signal] Updated sessionId for ${socket.userId} to ${sessionId}`);
-            }
-          } else {
-            console.warn(`[signal] Participant ${socket.userId} not found in call ${callId} - allowing ice_candidate (may be race condition)`);
-          }
-        } else {
-          console.log(`[signal] No sessionId provided for ice_candidate from ${socket.userId} - allowing (backward compatibility)`);
-        }
-
-      const payload = {
-        callId: callId,
-          chatId: chatId,
-        candidate: candidate,
-        fromUserId: socket.userId,
-        sessionId: sessionId
-      };
-
-      if (toUserId) {
-        // Send to specific participant (for mesh)
-        // Find socketId for target user
-        let targetSocketId = null;
-        for (const [sid, uid] of this.socketToUserMap.entries()) {
-          if (uid === toUserId) {
-            targetSocketId = sid;
-            break;
-          }
-        }
-        
-        if (targetSocketId) {
-          this.io.to(targetSocketId).emit('group_call_ice_candidate', payload);
-        } else {
-          // CRITICAL FIX: Try multiple delivery methods
-          // 1. Try user room
-          this.io.to(`user_${toUserId}`).emit('group_call_ice_candidate', payload);
-          // 2. Also try socket room (group_call_${chatId}) as fallback
-          // This ensures users in the same group call room receive the ICE candidate
-          socket.to(socketRoom).emit('group_call_ice_candidate', payload);
-        }
-      } else {
-          // Broadcast to all in chat room except sender
-          socket.to(socketRoom).emit('group_call_ice_candidate', payload);
-        }
-      } catch (error) {
-        console.error('Error handling group call ICE candidate:', error);
-      }
-    });
-    
-    // All mesh handlers above are deprecated - SFU only now
-
-    // Dismiss group call passive notification
-    socket.on('dismiss_group_call_alert', async (data) => {
-      try {
-        const { callId } = data;
-        
-        // Just acknowledge dismissal, no database change needed
-        socket.emit('group_call_alert_dismissed', {
-          callId: callId,
-          timestamp: new Date()
-        });
-
-        console.log(`User ${socket.userId} dismissed group call alert for ${callId}`);
-      } catch (error) {
-        console.error('Dismiss group call alert error:', error);
-      }
-    });
-
-    // SFU functionality has been removed
-
-    // Handle disconnect - cleanup SFU resources
-    socket.on('disconnect', async () => {
-      // Cleanup will be handled in handleDisconnect
-    });
   }
 
   // Broadcast to all connected users

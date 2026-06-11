@@ -33,6 +33,25 @@ function formatMessagePayload(message, messageObj, chat) {
   };
 }
 
+function emitToChatParticipants(io, chat, eventName, payload, excludeUserId = null) {
+  if (!io || !chat) return;
+
+  const chatId = chat._id?.toString?.() || String(chat);
+  const excludeId = excludeUserId ? excludeUserId.toString() : null;
+
+  console.log('[SOCKET]', eventName, 'chat:', chatId, excludeId ? `exclude: ${excludeId}` : '');
+
+  for (const participant of chat.participants || []) {
+    if (!participant.isActive || !participant.user) continue;
+    const userId = toUserId(participant.user);
+    if (!userId || (excludeId && userId === excludeId)) continue;
+    const room = `user_${userId}`;
+    const socketsInRoom = io.sockets?.adapter?.rooms?.get(room)?.size ?? 0;
+    console.log('[SOCKET] emit', eventName, '→', room, 'sockets:', socketsInRoom);
+    io.to(room).emit(eventName, payload);
+  }
+}
+
 /**
  * Emit private_message / group_message to every active participant except the sender.
  */
@@ -46,23 +65,42 @@ function broadcastChatMessage(io, chat, senderUserId, message, messageObj) {
     chatType: chat.type || 'private'
   };
 
-  const senderId = senderUserId ? senderUserId.toString() : null;
+  emitToChatParticipants(io, chat, event, payload, senderUserId);
+}
 
-  const chatId = chat._id?.toString?.() || String(chat);
-  console.log('[SOCKET]', event, 'chat:', chatId, 'sender:', senderId);
+/**
+ * Notify all participants (including editor) that a message was edited.
+ */
+function broadcastMessageEdited(io, chat, message, messageObj) {
+  if (!io || !chat || !message) return;
 
-  for (const participant of chat.participants || []) {
-    if (!participant.isActive || !participant.user) continue;
-    const userId = toUserId(participant.user);
-    if (!userId || (senderId && userId === senderId)) continue;
-    const room = `user_${userId}`;
-    const socketsInRoom = io.sockets?.adapter?.rooms?.get(room)?.size ?? 0;
-    console.log('[SOCKET] emit', event, '→', room, 'sockets:', socketsInRoom);
-    io.to(room).emit(event, payload);
-  }
+  const payload = {
+    message: formatMessagePayload(message, messageObj, chat)
+  };
+
+  emitToChatParticipants(io, chat, 'message_edited', payload);
+}
+
+/**
+ * Notify all participants that reactions changed on a message.
+ */
+function broadcastReactionUpdated(io, chat, messageId, reactions) {
+  if (!io || !chat || !messageId) return;
+
+  const chatId = chat._id ? chat._id.toString() : String(chat);
+  const payload = {
+    messageId: messageId.toString(),
+    chatId,
+    chatType: chat.type || 'private',
+    reactions: reactions || []
+  };
+
+  emitToChatParticipants(io, chat, 'reaction_updated', payload);
 }
 
 module.exports = {
   broadcastChatMessage,
+  broadcastMessageEdited,
+  broadcastReactionUpdated,
   formatMessagePayload
 };

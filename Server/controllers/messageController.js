@@ -4,7 +4,11 @@ const User = require('../models/User');
 const { validationResult } = require('express-validator');
 const { summarizeMessages } = require('../services/summarizeService');
 const { sendChatMessageNotification } = require('../services/fcmService');
-const { broadcastChatMessage } = require('../services/messageBroadcast');
+const {
+  broadcastChatMessage,
+  broadcastMessageEdited,
+  broadcastReactionUpdated
+} = require('../services/messageBroadcast');
 
 // @desc    Get messages for a chat
 // @route   GET /api/messages/:chatId
@@ -336,12 +340,19 @@ const editMessage = async (req, res) => {
     await message.populate('sender', 'username avatar status');
 
     const messageObj = message.toJSON();
+    const chat = await Chat.findById(message.chat);
+    const io = req.app.get('io');
+    if (io && chat) {
+      broadcastMessageEdited(io, chat, message, messageObj);
+    }
+
     res.json({
       success: true,
       message: 'Message edited successfully',
       data: {
         message: {
           ...messageObj,
+          chatType: chat ? chat.type : 'private',
           // Ensure sender has avatar info
           sender: {
             ...messageObj.sender,
@@ -475,6 +486,11 @@ const addReaction = async (req, res) => {
     // Add reaction
     await message.addReaction(req.user.id, emoji.trim());
 
+    const io = req.app.get('io');
+    if (io && chat) {
+      broadcastReactionUpdated(io, chat, message._id, message.reactions);
+    }
+
     res.json({
       success: true,
       message: 'Reaction added successfully',
@@ -515,8 +531,25 @@ const removeReaction = async (req, res) => {
       });
     }
 
+    const chat = await Chat.findById(message.chat);
+    const isParticipant = chat.participants.some(
+      p => p.user && p.user.toString() === req.user.id && p.isActive
+    );
+
+    if (!isParticipant) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
     // Remove reaction
     await message.removeReaction(req.user.id, emoji.trim());
+
+    const io = req.app.get('io');
+    if (io && chat) {
+      broadcastReactionUpdated(io, chat, message._id, message.reactions);
+    }
 
     res.json({
       success: true,
