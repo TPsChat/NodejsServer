@@ -60,15 +60,15 @@ const getMessagesUpdates = async (req, res) => {
     const chatIds = chats.map(chat => chat._id);
 
     const messages = await Message.find({
-      chatId: { $in: chatIds },
+      chat: { $in: chatIds },
       $or: [
         { createdAt: { $gt: new Date(since) } },
         { updatedAt: { $gt: new Date(since) } }
       ],
       isDeleted: false
     })
-      .populate('senderId', 'username avatar profile.firstName profile.lastName')
-      .populate('chatId', 'name type participants')
+      .populate('sender', 'username avatar profile.firstName profile.lastName')
+      .populate('chat', 'name type participants')
       .sort({ createdAt: -1 })
       .limit(100); // Limit to prevent huge responses
 
@@ -89,12 +89,14 @@ const getMessagesUpdates = async (req, res) => {
       success: true,
       data: {
         messages: messages.map(msg => {
-          const sender = formatUserRef(msg.senderId);
+          const sender = formatUserRef(msg.sender);
+          const chatRef = msg.chat;
           return {
             _id: msg._id,
-            chatId: toId(msg.chatId) || msg.chatId,
-            senderId: sender._id,
-            sender,
+            chat: toId(chatRef) || chatRef,
+            chatType: chatRef?.type || 'private',
+            sender: sender._id,
+            senderInfo: sender,
             content: msg.content,
             type: msg.type,
             attachments: msg.attachments,
@@ -104,8 +106,13 @@ const getMessagesUpdates = async (req, res) => {
             isDeleted: msg.isDeleted,
             replyTo: msg.replyTo,
             reactions: msg.reactions,
-            edited: msg.edited,
-            editedAt: msg.editedAt?.getTime() || null
+            edited: !!msg.isEdited,
+            isEdited: !!msg.isEdited,
+            ...(msg.isEdited && Array.isArray(msg.editHistory) && msg.editHistory.length > 0
+              ? {
+                  editedAt: msg.editHistory[msg.editHistory.length - 1].editedAt?.getTime() || null
+                }
+              : {})
           };
         }),
         updated_at: latestTimestamp

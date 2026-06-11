@@ -4,6 +4,7 @@ const User = require('../models/User');
 const { validationResult } = require('express-validator');
 const { summarizeMessages } = require('../services/summarizeService');
 const { sendChatMessageNotification } = require('../services/fcmService');
+const { broadcastChatMessage } = require('../services/messageBroadcast');
 
 // @desc    Get messages for a chat
 // @route   GET /api/messages/:chatId
@@ -250,6 +251,12 @@ const sendMessage = async (req, res) => {
         // Don't fail the request if notification fails
       }
     })();
+
+    const io = req.app.get('io');
+    if (io) {
+      broadcastChatMessage(io, chat, req.user.id, message, messageObj);
+    }
+
     res.status(201).json({
       success: true,
       message: 'Message sent successfully',
