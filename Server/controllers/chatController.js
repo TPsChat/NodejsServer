@@ -4,6 +4,21 @@ const User = require('../models/User');
 const Group = require('../models/Group');
 const { validationResult } = require('express-validator');
 
+const broadcastGroupAvatarChanged = (req, chatId, avatar) => {
+  try {
+    const io = req.app.get('io');
+    if (!io) {
+      return;
+    }
+    io.emit('group_avatar_changed', {
+      chatId: chatId.toString(),
+      avatar: avatar || ''
+    });
+  } catch (error) {
+    console.error('Failed to broadcast group_avatar_changed:', error);
+  }
+};
+
 // @desc    Get user's chats
 // @route   GET /api/chats
 // @access  Private
@@ -535,6 +550,10 @@ const updateGroupChat = async (req, res) => {
 
     await chat.updateLastActivity();
     await group.updateLastActivity();
+
+    if (avatar !== undefined) {
+      broadcastGroupAvatarChanged(req, chat._id, chat.avatar);
+    }
 
     res.json({
       success: true,
@@ -1430,6 +1449,11 @@ const uploadGroupAvatar = async (req, res) => {
       chatId: chat._id, 
       filename: req.file.filename 
     });
+
+    const io = req.app.get('io');
+    if (io) {
+      broadcastGroupAvatarChanged(req, chat._id, chat.avatar);
+    }
 
     res.json({
       success: true,

@@ -9,6 +9,21 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
+const broadcastAvatarChanged = (req, userId, avatar) => {
+  try {
+    const io = req.app.get('io');
+    if (!io) {
+      return;
+    }
+    io.emit('avatar_changed', {
+      userId: userId.toString(),
+      avatar: avatar || ''
+    });
+  } catch (error) {
+    console.error('Failed to broadcast avatar_changed:', error);
+  }
+};
+
 // @desc    Register a new user
 // @route   POST /api/auth/register
 // @access  Public
@@ -320,6 +335,10 @@ const updateProfile = async (req, res) => {
 
     await user.save();
 
+    if (avatar !== undefined) {
+      broadcastAvatarChanged(req, user._id, user.avatar);
+    }
+
     res.json({
       success: true,
       message: 'Profile updated successfully',
@@ -599,6 +618,7 @@ const uploadAvatar = async (req, res) => {
       // Update user's avatar URL
       const avatarUrl = `/uploads/avatars/${req.file.filename}`;
       await User.findByIdAndUpdate(userId, { avatar: avatarUrl });
+      broadcastAvatarChanged(req, userId, avatarUrl);
 
       res.json({
         success: true,
