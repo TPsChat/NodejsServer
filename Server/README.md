@@ -16,7 +16,6 @@ npm run dev
 - [Installation](#installation)
 - [Environment Configuration](#environment-configuration)
 - [MongoDB Setup](#mongodb-setup)
-- [TURN Server Configuration](#turn-server-configuration)
 - [Running the Server](#running-the-server)
 - [API Endpoints](#api-endpoints)
 - [Troubleshooting](#troubleshooting)
@@ -96,7 +95,6 @@ See `.env.example` for all available options. Key variables:
 - `JWT_SECRET`: Generate with: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 - `CLIENT_URL`: IP of machine running server
 - `SMTP_*`: Email configuration for OTP registration
-- `TURN_*`: TURN server for WebRTC calls (optional)
 
 ---
 
@@ -124,68 +122,6 @@ Run:
 ```bash
 npm run seed:admin
 ```
-
----
-
-## TURN Server Configuration
-
-TURN server is needed for WebRTC video/audio calls when direct peer-to-peer connections fail.
-
-### Option A: Self-hosted (coturn)
-
-**Install:**
-```bash
-# Ubuntu/Debian
-sudo apt-get install coturn
-
-# Mac
-brew install coturn
-```
-
-**Configure `/etc/turnserver.conf`:**
-```conf
-listening-ip=0.0.0.0
-listening-port=3478
-external-ip=YOUR_PUBLIC_IP
-realm=yourdomain.com
-user=your_turn_username:your_turn_password
-stun-only=no
-```
-
-**Start:**
-```bash
-sudo systemctl start coturn
-sudo systemctl enable coturn
-```
-
-**Firewall:**
-```bash
-sudo ufw allow 3478/udp
-sudo ufw allow 3478/tcp
-sudo ufw allow 49152:65535/udp
-```
-
-**Add to `.env`:**
-```env
-TURN_URL=turn:YOUR_PUBLIC_IP:3478
-TURN_USERNAME=your_turn_username
-TURN_CREDENTIAL=your_turn_password
-```
-
-### Option B: Cloud TURN Services
-
-**Metered.ca (Free tier):**
-1. Sign up at [Metered.ca](https://www.metered.ca/)
-2. Get credentials
-3. Add to `.env`:
-```env
-TURN_URL=turn:a.relay.metered.ca:80
-TURN_USERNAME=your_metered_username
-TURN_CREDENTIAL=your_metered_password
-```
-
-**Twilio/Xirsys:**
-- See main README for configuration
 
 ---
 
@@ -282,11 +218,6 @@ See API documentation or Postman collection for complete list.
 - Verify SMTP credentials
 - For Gmail: Use App Password (not regular password)
 - Check firewall allows port 587/465
-
-### TURN server issues
-- Test: `stunclient YOUR_TURN_SERVER_IP 3478`
-- Verify firewall allows UDP 3478 and RTP range
-- Check `external-ip` matches public IP
 
 ---
 

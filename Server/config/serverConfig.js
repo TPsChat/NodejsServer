@@ -84,13 +84,6 @@ const serverConfig = {
         geminiApiKey: process.env.GEMINI_API_KEY
     },
     
-    // TURN server settings
-    turn: {
-        url: process.env.TURN_URL,
-        username: process.env.TURN_USERNAME,
-        credential: process.env.TURN_CREDENTIAL
-    },
-    
     // Admin settings
     admin: {
         email: process.env.ADMIN_EMAIL,

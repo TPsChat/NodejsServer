@@ -8,16 +8,13 @@ const { v4: uuidv4 } = require('uuid');
 // Helper function to extract chatId string from call object (handles both ObjectId and populated object)
 // Helper: Ensure call has correct configuration
 const ensureCallConfig = (call) => {
-    if (!call.webrtcData) {
-        call.webrtcData = {};
+    if (!call.roomData) {
+        call.roomData = {};
     }
-    // Set media topology to mesh (peer-to-peer)
-    call.webrtcData.mediaTopology = 'mesh';
-    // Ensure roomId exists
-    if (!call.webrtcData.roomId) {
+    if (!call.roomData.roomId) {
         const chatId = extractChatId(call);
         if (chatId) {
-            call.webrtcData.roomId = `room_${chatId}`;
+            call.roomData.roomId = `room_${chatId}`;
         }
     }
 };
@@ -150,7 +147,7 @@ const sendGroupCallNotification = async (io, call, chat, caller, callerId) => {
 // The timestamp (using time window) differentiates subsequent calls after previous ones have ended
 // Note: The actual implementation uses a time window approach in initiateGroupCall for better race condition handling
 
-// Generate WebRTC room ID
+// Generate call room ID
 const generateRoomId = () => {
     return `room_${Date.now()}_${uuidv4().substring(0, 12)}`;
 };
@@ -385,16 +382,9 @@ const initiateGroupCall = async (req, res) => {
                         chatId: chatId,
                         isGroupCall: true,
                         status: 'notified',
-                        webrtcData: {
+                        roomData: {
                             // CRITICAL: Use chatId-based roomId so all participants use same room
-                            roomId: `room_${chatIdStr}`,
-                            iceServers: [
-                                { urls: "turn:103.75.183.125:3478", username: "phu142", credential: "phu142" },
-                                { urls: 'stun:stun.l.google.com:19302' },
-                                { urls: 'stun:stun1.l.google.com:19302' },
-                                { urls: 'stun:stun2.l.google.com:19302' }
-                            ],
-                            mediaTopology: 'sfu'
+                            roomId: `room_${chatIdStr}`
                         },
                         participants: [{
                             userId: callerId,

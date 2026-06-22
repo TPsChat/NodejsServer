@@ -9,7 +9,7 @@ const generateCallId = () => {
     return `call_${Date.now()}_${uuidv4().substring(0, 8)}`;
 };
 
-// Generate WebRTC room ID
+// Generate call room ID for Socket.IO media relay
 const generateRoomId = () => {
     return `room_${Date.now()}_${uuidv4().substring(0, 12)}`;
 };
@@ -78,32 +78,14 @@ const initiateCall = async (req, res) => {
         const callId = generateCallId();
         const roomId = generateRoomId();
 
-        // Build ICE servers (include TURN if configured)
-        const iceServers = [
-            { urls: "turn:103.75.183.125:3478", username: "phu142", credential: "phu142" },
-            { urls: "turn:103.75.183.125:5349", username: "phu142", credential: "phu142" },
-            { urls: "turn:192.168.2.36:3478", username: "phu142", credential: "phu142" },
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' }
-        ];
-        if (process.env.TURN_URL && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
-            iceServers.push({
-                urls: process.env.TURN_URL,
-                username: process.env.TURN_USERNAME,
-                credential: process.env.TURN_CREDENTIAL
-            });
-        }
-
         const call = new Call({
             callId: callId,
             type: type,
             chatId: chatId,
             isGroupCall: chat.type === 'group',
             status: 'initiated',
-            webrtcData: {
-                roomId: roomId,
-                iceServers: iceServers
+            roomData: {
+                roomId: roomId
             },
             participants: [{
                 userId: callerId,

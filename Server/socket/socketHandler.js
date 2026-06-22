@@ -443,7 +443,7 @@ class SocketHandler {
         this.activeCalls.set(callId, {
           callId: callId,
           participants: connectedParticipantIds,
-          roomId: call.webrtcData ? call.webrtcData.roomId : `room_${callId}`
+          roomId: call.getRoomId(callId)
         });
         
         console.log(`join_call_room: Updated activeCalls for ${callId} with ${connectedParticipantIds.length} connected participants (out of ${call.participants.length} total):`, connectedParticipantIds);
@@ -486,9 +486,8 @@ class SocketHandler {
         // Send call info to user with only participants who have joined
         socket.emit('call_room_joined', {
           callId: callId,
-          roomId: call.webrtcData.roomId,
-          participants: activeParticipants,
-          iceServers: call.webrtcData.iceServers
+          roomId: call.getRoomId(callId),
+          participants: activeParticipants
         });
 
       } catch (error) {
@@ -555,7 +554,7 @@ class SocketHandler {
               this.activeCalls.set(callId, {
                 callId: callId,
                 participants: connectedParticipantIds,
-                roomId: call.webrtcData ? call.webrtcData.roomId : `room_${callId}`
+                roomId: call.getRoomId(callId)
               });
               
               // Retry sending the frame
@@ -600,7 +599,7 @@ class SocketHandler {
             this.activeCalls.set(callId, {
               callId: callId,
               participants: latestParticipantIds,
-              roomId: call.webrtcData ? call.webrtcData.roomId : `room_${callId}`
+              roomId: call.getRoomId(callId)
             });
             
             // Forward frame with updated participant list (only connected participants)
@@ -621,7 +620,7 @@ class SocketHandler {
       }
     });
 
-    // Handle custom audio frames (without WebRTC)
+    // Handle custom audio frames relayed via Socket.IO
     socket.on('audio_frame', async (data) => {
       try {
         const { callId, audio, timestamp } = data;
@@ -650,7 +649,7 @@ class SocketHandler {
               this.activeCalls.set(callId, {
                 callId: callId,
                 participants: connectedParticipantIds,
-                roomId: call.webrtcData ? call.webrtcData.roomId : `room_${callId}`
+                roomId: call.getRoomId(callId)
               });
               
               // Retry sending the audio frame
@@ -695,7 +694,7 @@ class SocketHandler {
             this.activeCalls.set(callId, {
               callId: callId,
               participants: latestParticipantIds,
-              roomId: call.webrtcData ? call.webrtcData.roomId : `room_${callId}`
+              roomId: call.getRoomId(callId)
             });
             
             // Forward audio frame with updated participant list (only connected participants)

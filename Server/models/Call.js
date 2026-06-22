@@ -94,24 +94,16 @@ const callSchema = new mongoose.Schema({
         default: false
     },
     
-    // WebRTC information
-    webrtcData: {
+    // Call room for Socket.IO media relay
+    roomData: {
         roomId: {
             type: String,
             required: true
         },
-        iceServers: [{
-            urls: String,
-            username: String,
-            credential: String
-        }],
-        sdpOffer: String,
-        sdpAnswer: String,
-            mediaTopology: {
-                type: String,
-                enum: ['sfu'],
-                default: 'sfu'
-            }
+        roomEnded: {
+            type: Boolean,
+            default: false
+        }
     },
     
     // Participant media states
@@ -293,9 +285,9 @@ callSchema.methods.endCall = async function(endedBy) {
     this.endedAt = new Date();
     this.duration = this.calculatedDuration;
     
-    // Update webrtcData to mark room as ended
-    this.webrtcData = this.webrtcData || {};
-    this.webrtcData.roomEnded = true;
+    // Mark call room as ended
+    this.roomData = this.roomData || {};
+    this.roomData.roomEnded = true;
     
     // Update all participants status to 'left'
     this.participants.forEach(participant => {
@@ -306,6 +298,14 @@ callSchema.methods.endCall = async function(endedBy) {
     });
     
     return this.save();
+};
+
+callSchema.methods.getRoomId = function(fallbackCallId) {
+    const legacy = this.roomData || this.webrtcData;
+    if (legacy && legacy.roomId) {
+        return legacy.roomId;
+    }
+    return fallbackCallId ? `room_${fallbackCallId}` : null;
 };
 
 callSchema.methods.getActiveParticipants = function() {
