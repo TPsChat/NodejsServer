@@ -74,7 +74,13 @@ const sendMessageValidation = [
   body('attachments.*.url')
     .optional()
     .isURL()
-    .withMessage('Attachment URL must be valid')
+    .withMessage('Attachment URL must be valid'),
+  body('clientNonce')
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 8, max: 128 })
+    .withMessage('clientNonce must be 8-128 characters')
 ];
 
 const editMessageValidation = [

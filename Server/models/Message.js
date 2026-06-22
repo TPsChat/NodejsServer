@@ -122,6 +122,12 @@ const messageSchema = new mongoose.Schema({
       type: Number,
       default: 0
     }
+  },
+  /** Client-generated idempotency key (offline retry / duplicate POST dedup). */
+  clientNonce: {
+    type: String,
+    trim: true,
+    maxlength: 128
   }
 }, {
   timestamps: true,
@@ -141,6 +147,10 @@ messageSchema.index({ sender: 1 });
 messageSchema.index({ type: 1 });
 messageSchema.index({ isDeleted: 1 });
 messageSchema.index({ 'readBy.user': 1 });
+messageSchema.index(
+  { chat: 1, sender: 1, clientNonce: 1 },
+  { unique: true, sparse: true }
+);
 
 // Virtual for unread status (computed per user)
 messageSchema.virtual('isRead').get(function() {

@@ -10,6 +10,47 @@ const {
   broadcastReactionUpdated
 } = require('../services/messageBroadcast');
 
+const MESSAGE_POPULATE = [
+  { path: 'sender', select: 'username avatar status profile' },
+  { path: 'replyTo', select: 'content sender type' }
+];
+
+function formatMessageApiPayload(message, messageObj, chat) {
+  return {
+    ...messageObj,
+    chatType: chat.type,
+    sender: message.sender
+      ? {
+          ...messageObj.sender,
+          avatar: message.sender.avatar || ''
+        }
+      : null,
+    senderInfo: message.sender
+      ? {
+          id: message.sender._id,
+          username: message.sender.username,
+          avatar: message.sender.avatar || ''
+        }
+      : null
+  };
+}
+
+async function findMessageByClientNonce(chatId, senderId, clientNonce) {
+  if (!clientNonce || typeof clientNonce !== 'string') {
+    return null;
+  }
+  const trimmed = clientNonce.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return Message.findOne({
+    chat: chatId,
+    sender: senderId,
+    clientNonce: trimmed,
+    isDeleted: false
+  }).populate(MESSAGE_POPULATE);
+}
+
 // @desc    Get messages for a chat
 // @route   GET /api/messages/:chatId
 // @access  Private
@@ -135,7 +176,10 @@ const sendMessage = async (req, res) => {
       });
     }
 
-    const { chatId, content, type = 'text', replyTo, attachments } = req.body;
+    const { chatId, content, type = 'text', replyTo, attachments, clientNonce } = req.body;
+    const normalizedNonce = clientNonce && typeof clientNonce === 'string'
+      ? clientNonce.trim()
+      : '';
 
     // Check if chat exists and user is participant
     const chat = await Chat.findById(chatId);
@@ -155,6 +199,22 @@ const sendMessage = async (req, res) => {
         success: false,
         message: 'Access denied to this chat'
       });
+    }
+
+    // Idempotent retry: return existing message without re-broadcasting
+    if (normalizedNonce) {
+      const existing = await findMessageByClientNonce(chatId, req.user.id, normalizedNonce);
+      if (existing) {
+        const messageObj = existing.toJSON();
+        return res.status(200).json({
+          success: true,
+          message: 'Message already sent',
+          data: {
+            message: formatMessageApiPayload(existing, messageObj, chat),
+            deduplicated: true
+          }
+        });
+      }
     }
 
     // If private chat, enforce block status and reactivate inactive participant
@@ -184,20 +244,36 @@ const sendMessage = async (req, res) => {
       sender: req.user.id,
       chat: chatId,
       replyTo: replyTo || undefined,
-      attachments: attachments || []
+      attachments: attachments || [],
+      ...(normalizedNonce ? { clientNonce: normalizedNonce } : {})
     });
 
-    await message.save();
+    try {
+      await message.save();
+    } catch (saveError) {
+      if (saveError.code === 11000 && normalizedNonce) {
+        const existing = await findMessageByClientNonce(chatId, req.user.id, normalizedNonce);
+        if (existing) {
+          const messageObj = existing.toJSON();
+          return res.status(200).json({
+            success: true,
+            message: 'Message already sent',
+            data: {
+              message: formatMessageApiPayload(existing, messageObj, chat),
+              deduplicated: true
+            }
+          });
+        }
+      }
+      throw saveError;
+    }
 
     // Update chat's last message and activity
     chat.lastMessage = message._id;
     await chat.updateLastActivity();
 
     // Populate message for response
-    await message.populate([
-      { path: 'sender', select: 'username avatar status profile' },
-      { path: 'replyTo', select: 'content sender type' }
-    ]);
+    await message.populate(MESSAGE_POPULATE);
 
     // Get message object for notification (before async call)
     const messageObj = message.toJSON();
@@ -265,20 +341,7 @@ const sendMessage = async (req, res) => {
       success: true,
       message: 'Message sent successfully',
       data: {
-        message: {
-          ...messageObj,
-          chatType: chat.type,
-          // Ensure sender has avatar info (handle null sender)
-          sender: message.sender ? {
-            ...messageObj.sender,
-            avatar: message.sender.avatar || ''
-          } : null,
-          senderInfo: message.sender ? {
-            id: message.sender._id,
-            username: message.sender.username,
-            avatar: message.sender.avatar || ''
-          } : null
-        }
+        message: formatMessageApiPayload(message, messageObj, chat)
       }
     });
 
